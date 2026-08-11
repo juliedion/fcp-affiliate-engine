@@ -1,0 +1,58 @@
+{% comment %}
+  affiliate-buy-buttons.liquid
+  ------------------------------------------------------------------
+  Wraps the theme's normal buy-buttons snippet: renders the standard Add to Cart / Buy It Now
+  flow for regular products unchanged, but swaps in an external affiliate CTA (+ optional
+  merchant badge + disclosure) for products flagged via the `custom.is_affiliate_product`
+  metafield — set by Fort Crazypants OS's Shopify publish/update routes.
+
+  USAGE — in your product template/section (e.g. main-product.liquid or the "Buy buttons"
+  block inside sections/main-product.liquid), replace:
+      {% render 'buy-buttons', ... %}
+  with:
+      {% render 'affiliate-buy-buttons', product: product, product_form_id: product_form_id, block: block, section: section %}
+
+  Pass through whatever variables your theme's own buy-buttons snippet expects — this snippet
+  forwards them all to the real 'buy-buttons' render call for the non-affiliate path, so it
+  does not duplicate/reimplement anything from your theme.
+{% endcomment %}
+
+{%- assign is_affiliate = product.metafields.custom.is_affiliate_product.value -%}
+{%- assign affiliate_url = product.metafields.custom.affiliate_url.value -%}
+
+{%- if is_affiliate and affiliate_url != blank -%}
+  {%- assign cta_text = product.metafields.custom.cta_text.value | default: 'View Product' -%}
+  {%- assign merchant = product.metafields.custom.merchant.value -%}
+  {%- assign disclosure = settings.affiliate_disclosure_text | default: 'We may earn a commission if you purchase through this link.' -%}
+  {%- if merchant == 'Amazon' -%}
+    {%- assign disclosure = 'As an Amazon Associate, I earn from qualifying purchases.' -%}
+  {%- endif -%}
+
+  <div class="affiliate-product-block" data-affiliate-product-block>
+    {%- if merchant != blank -%}
+      <p class="affiliate-merchant-badge">Available at {{ merchant }}</p>
+    {%- endif -%}
+
+    {%- comment -%} Add to Cart, Buy It Now, quantity selector, pickup/inventory messaging,
+      and subscription options are intentionally NOT rendered on this path — none of the
+      theme's normal buy-buttons markup is included for affiliate products. {%- endcomment -%}
+    <a
+      href="{{ affiliate_url | escape }}"
+      class="affiliate-buy-button button button--full-width"
+      target="_blank"
+      rel="nofollow sponsored noopener"
+      data-affiliate-click
+      data-product-id="{{ product.id }}"
+      data-product-title="{{ product.title | escape }}"
+      data-merchant="{{ merchant | escape }}"
+      data-affiliate-network="{{ product.metafields.custom.affiliate_network.value | escape }}"
+      data-destination-url="{{ affiliate_url | escape }}"
+    >
+      {{ cta_text | escape }}
+    </a>
+
+    <p class="affiliate-disclosure">{{ disclosure | escape }}</p>
+  </div>
+{%- else -%}
+  {%- render 'buy-buttons', product: product, product_form_id: product_form_id, block: block, section: section -%}
+{%- endif -%}
