@@ -159,8 +159,8 @@ export default function ProductDrawer({
 
         <div className="actions" style={{ marginTop: 16 }}>
           <button className="secondary" onClick={onWatch}>{isWatched ? "★ Watching" : "☆ Add to Watchlist"}</button>
-          <button className="primary" onClick={onAutoBuild} disabled={autoBuilding} title="Auto-generates title, description, pricing, category, SEO, and real AI images — lands in Product Studio for you to review and publish.">{autoBuilding ? "Auto-building…" : "Auto-build listing (AI)"}</button>
-          <button className="secondary" onClick={onSendToStudio}>Send to Product Studio</button>
+          <button className="primary" onClick={onAutoBuild} disabled={autoBuilding} title="Auto-generates title, description, pricing, category, SEO, and real AI images — lands in Find Engine for you to review and publish.">{autoBuilding ? "Auto-building…" : "Auto-build listing (AI)"}</button>
+          <button className="secondary" onClick={onSendToStudio}>Send to Find Engine</button>
           <button className="secondary" onClick={() => onSetStatus("testing")}>Mark as Testing</button>
           <button className="secondary" onClick={() => onSetStatus("published")}>Mark as Published</button>
           <button className="secondary" onClick={() => onSetStatus("rejected")}>Mark as Rejected</button>

@@ -30,7 +30,7 @@ export default function Settings() {
   return <AppShell>
     <div className="top">
       <div>
-        <div className="eyebrow">Product Studio</div>
+        <div className="eyebrow">Find Engine</div>
         <h1 className="title">Settings</h1>
         <div className="muted">Brand voice, default collections, and affiliate disclosure — applied to new products you generate.</div>
       </div>

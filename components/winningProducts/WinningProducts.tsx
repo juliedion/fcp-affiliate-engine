@@ -234,7 +234,7 @@ export default function WinningProducts() {
 
   // One-click pipeline: generate the full listing (title, description, SEO, pricing,
   // category, social prompts) AND render real AI images automatically — stops short of
-  // Shopify itself, landing in Product Studio for a human to review and click Publish.
+  // Shopify itself, landing in Find Engine for a human to review and click Publish.
   async function autoBuildAndGenerate(p: ProductOpportunity) {
     setAutoBuildingId(p.id);
     try {
@@ -256,7 +256,7 @@ export default function WinningProducts() {
       if (!genRes.ok) throw new Error(generated.error || "Listing generation failed.");
 
       // Cap at 3 real image generations per auto-build to keep this fast and bounded — the
-      // rest of the AI Image Prompt cards remain available to generate manually in Product Studio.
+      // rest of the AI Image Prompt cards remain available to generate manually in Find Engine.
       const images: Record<string, string> = {};
       for (const ip of generated.imagePrompts.slice(0, 3)) {
         try {
@@ -293,7 +293,7 @@ export default function WinningProducts() {
 
   return (
     <>
-      <div className="top"><div><div className="eyebrow">Internal Research Tool</div><h1 className="title">🔥 Winning Product Finder</h1><div className="muted">Search approved sources for rising-demand products, score them for Fort Crazypants fit, and send winners straight to Product Studio.</div></div>
+      <div className="top"><div><div className="eyebrow">Internal Research Tool</div><h1 className="title">🔥 Find Ideas</h1><div className="muted">Search approved sources for rising-demand products, score them for Fort Crazypants fit, and send winners straight to Find Engine.</div></div>
         <button className="secondary" onClick={() => setShowSettings(true)}>⚙ Settings</button>
       </div>
 
@@ -349,7 +349,7 @@ export default function WinningProducts() {
               <div className="muted" style={{ fontSize: 13 }}>{m.source || "Unknown source"}{m.price ? ` · $${m.price.toFixed(2)}` : ""}</div>
               <div className="actions" style={{ marginTop: 8 }}>
                 <a className="secondary" href={m.link} target="_blank" rel="noreferrer" style={{ textAlign: "center" }}>View listing</a>
-                <button className="secondary" onClick={() => researchLensMatch(m)}>Research in Product Studio</button>
+                <button className="secondary" onClick={() => researchLensMatch(m)}>Research in Find Engine</button>
               </div>
             </div>)}
           </div>}
@@ -380,7 +380,7 @@ export default function WinningProducts() {
             <div className="merchBlock"><h3>Top 5 Candidates</h3><ul>{topFive.map(p => <li key={p.id}>{p.title} ({p.score.total})</li>)}</ul></div>
             <div className="merchBlock"><h3>Products to Watch</h3><ul>{toWatch.length ? toWatch.map(p => <li key={p.id}>{p.title}</li>) : <li className="muted">None this scan.</li>}</ul></div>
             <div className="merchBlock"><h3>Products to Avoid</h3><ul>{toAvoid.length ? toAvoid.map(p => <li key={p.id}>{p.title} ({p.aiSummary.recommendation})</li>) : <li className="muted">None this scan.</li>}</ul></div>
-            <div className="merchBlock"><h3>Ready for Product Studio</h3><ul>{readyForStudio.length ? readyForStudio.map(p => <li key={p.id}>{p.title}</li>) : <li className="muted">None this scan.</li>}</ul></div>
+            <div className="merchBlock"><h3>Ready for Find Engine</h3><ul>{readyForStudio.length ? readyForStudio.map(p => <li key={p.id}>{p.title}</li>) : <li className="muted">None this scan.</li>}</ul></div>
           </div>}
         </section>}
 
