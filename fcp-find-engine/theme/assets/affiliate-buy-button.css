@@ -1,0 +1,80 @@
+/* affiliate-buy-button.css
+   Paste into a new theme asset (Assets > Add a new asset > affiliate-buy-button.css) and
+   link it from theme.liquid's <head>:
+     {{ 'affiliate-buy-button.css' | asset_url | stylesheet_tag }}
+   or, if your theme already has a single bundled stylesheet, append these rules to it.
+*/
+
+.affiliate-product-block {
+  margin-top: 1.5rem;
+}
+
+.affiliate-merchant-badge {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #1a5f4a;
+  background: rgba(26, 95, 74, 0.1);
+  padding: 0.3em 0.7em;
+  border-radius: 999px;
+  margin-bottom: 0.75rem;
+}
+
+.affiliate-buy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 220px;
+  padding: 0.9em 1.75em;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #fff;
+  background-color: #1a5f4a;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  text-decoration: none;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.05s ease;
+}
+
+.affiliate-buy-button:hover,
+.affiliate-buy-button:focus-visible {
+  background-color: #144a3a;
+}
+
+/* Visible, high-contrast focus ring for keyboard navigation — do not remove the outline,
+   only restyle it. Meets WCAG 2.4.7 (Focus Visible). */
+.affiliate-buy-button:focus-visible {
+  outline: 3px solid #f0c85a;
+  outline-offset: 2px;
+}
+
+.affiliate-buy-button:active {
+  transform: translateY(1px);
+}
+
+.affiliate-disclosure {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  font-style: italic;
+  color: #666;
+  max-width: 42em;
+}
+
+/* Full-width on mobile, per spec. */
+@media (max-width: 749px) {
+  .affiliate-buy-button {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .affiliate-disclosure {
+    color: #aaa;
+  }
+}
