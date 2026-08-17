@@ -41,10 +41,38 @@ type MicrolinkData = {
   data?: {
     title?: string | null;
     description?: string | null;
+    url?: string | null;
     image?: { url?: string | null } | null;
     logo?: { url?: string | null } | null;
   };
 };
+
+async function resolveDestinationUrl(url: string): Promise<string> {
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)amzn\.to$/i.test(parsed.hostname)) return url;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        cache: "no-store",
+        headers: {
+          "user-agent": "Mozilla/5.0 (compatible; FortCrazypantsFindEngine/1.0)",
+          accept: "text/html,application/xhtml+xml"
+        }
+      });
+      return response.url || url;
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return url;
+  }
+}
 
 async function browserMetadataFallback(url: string) {
   try {
@@ -59,6 +87,7 @@ async function browserMetadataFallback(url: string) {
       return {
         title: usableProductTitle(payload.data?.title),
         description: payload.data?.description || null,
+        destinationUrl: payload.data?.url || null,
         images: image && /^https?:\/\//i.test(image) ? [image] : []
       };
     } finally {
@@ -70,18 +99,38 @@ async function browserMetadataFallback(url: string) {
 export async function POST(req: Request) {
   try {
     const { url } = schema.parse(await req.json());
-    let scraped = await scrapeProduct(url);
+
+    // Resolve Amazon short links first. The original short URL is still passed into
+    // inferProductInput below so the affiliate URL/tracking destination is preserved.
+    // We only use the resolved URL to improve product research/title extraction.
+    let researchUrl = await resolveDestinationUrl(url);
+    let scraped = await scrapeProduct(researchUrl);
     let browserFallbackUsed = false;
 
-    // Never allow a retailer/site name (for example Amazon) to become the Shopify
-    // product title. Amazon frequently returns generic social metadata even when
-    // the gallery and price are usable.
     scraped = { ...scraped, title: usableProductTitle(scraped.title) };
 
-    if (scraped.blocked || scraped.images.length === 0) {
-      const fallback = await browserMetadataFallback(url);
+    // Try browser metadata whenever the title is missing/generic too — not only when
+    // images are missing. This is the key fix for Amazon pages where images/price work
+    // but the social title is merely "Amazon".
+    if (scraped.blocked || scraped.images.length === 0 || !usableProductTitle(scraped.title)) {
+      let fallback = await browserMetadataFallback(researchUrl);
+
+      // If direct redirect resolution was blocked, Microlink may still resolve the
+      // amzn.to URL. Use its destination and make one more metadata pass there.
+      if ((!fallback?.title || researchUrl === url) && /(^|\.)amzn\.to$/i.test(new URL(url).hostname)) {
+        const shortFallback = await browserMetadataFallback(url);
+        const destination = shortFallback?.destinationUrl;
+        if (destination && /^https?:\/\//i.test(destination) && destination !== url) {
+          researchUrl = destination;
+          const destinationFallback = await browserMetadataFallback(destination);
+          fallback = destinationFallback?.title ? destinationFallback : (shortFallback || fallback);
+        } else if (shortFallback) {
+          fallback = shortFallback;
+        }
+      }
+
       if (fallback) {
-        browserFallbackUsed = fallback.images.length > 0;
+        browserFallbackUsed = fallback.images.length > 0 || Boolean(fallback.title);
         scraped = {
           ...scraped,
           title: usableProductTitle(scraped.title) || fallback.title || null,
@@ -91,12 +140,12 @@ export async function POST(req: Request) {
       }
     }
 
-    // URL-derived titles are useful for descriptive retailer slugs, but Amazon's
-    // short /dp/ASIN links contain no product name. In that case leave the title
-    // empty instead of silently publishing a product named "Amazon".
+    // A resolved Amazon URL often contains a descriptive product slug. Use that before
+    // falling back to the original short URL, which only contains an opaque short code.
     if (!usableProductTitle(scraped.title)) {
-      const fallbackTitle = usableProductTitle(titleFromProductUrl(url));
-      scraped = { ...scraped, title: fallbackTitle };
+      const resolvedTitle = usableProductTitle(titleFromProductUrl(researchUrl));
+      const originalTitle = usableProductTitle(titleFromProductUrl(url));
+      scraped = { ...scraped, title: resolvedTitle || originalTitle };
     }
 
     const inference = inferProductInput(scraped, url);
@@ -106,11 +155,12 @@ export async function POST(req: Request) {
       scraped,
       research,
       ...inference,
+      resolvedResearchUrl: researchUrl !== url ? researchUrl : undefined,
       fallbackUsed: Boolean(scraped.blocked || browserFallbackUsed),
       browserFallbackUsed,
       fallbackReason: scraped.blocked
         ? browserFallbackUsed
-          ? "Retailer blocked direct research; product image/metadata recovered with the browser fallback. Verify product name and price before generating."
+          ? "Retailer blocked direct research; product metadata recovered with the browser fallback. Verify the details before generating."
           : "Retailer blocked automatic product research. Verify product name, price, and image before generating."
         : null
     });
