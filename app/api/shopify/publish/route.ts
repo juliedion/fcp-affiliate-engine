@@ -48,7 +48,7 @@ export async function POST(req: Request) {
   // what lets the scheduled price-resync job (see /api/cron/resync-prices) find these
   // products later and know which URL to re-check, since this app has no database of its
   // own; Shopify's metafields are the only durable, server-visible place to keep it.
-  const metafields = product.productType === "amazon_affiliate" && product.url
+  const metafields = product.isAffiliateProduct && product.url
     ? [{ namespace: "fort_crazypants", key: "source_url", type: "url", value: String(product.url) }]
     : undefined;
 
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
   let inventoryError: unknown = null;
   let priceSet = false;
   let variantsCreated = 0;
-  const isAffiliate = product.productType === "amazon_affiliate";
+  const isAffiliate = Boolean(product.isAffiliateProduct);
   const variantQuery = `query($id: ID!) { product(id: $id) { variants(first: 1) { nodes { id } } } }`;
   const variantResponse = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, { method: "POST", headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token }, body: JSON.stringify({ query: variantQuery, variables: { id: created.id } }) });
   const variantData = await variantResponse.json();
