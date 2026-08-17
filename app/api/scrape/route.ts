@@ -43,15 +43,25 @@ type MicrolinkData = {
     description?: string | null;
     url?: string | null;
     image?: { url?: string | null } | null;
-    logo?: { url?: string | null } | null;
   };
 };
+
+function isAmazonUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === "amzn.to" || host.endsWith(".amzn.to") || host === "amazon.com" || host.endsWith(".amazon.com");
+  } catch { return false; }
+}
+
+function isAmazonGenericImage(value: string): boolean {
+  return /amazonfresh|fresh-logo|amazon_logo|amazon-logo|nav-logo|logo\.png|logo\.jpg/i.test(value);
+}
 
 async function resolveDestinationUrl(url: string): Promise<string> {
   try {
     const parsed = new URL(url);
     if (!/(^|\.)amzn\.to$/i.test(parsed.hostname)) return url;
-
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
@@ -60,18 +70,11 @@ async function resolveDestinationUrl(url: string): Promise<string> {
         redirect: "follow",
         signal: controller.signal,
         cache: "no-store",
-        headers: {
-          "user-agent": "Mozilla/5.0 (compatible; FortCrazypantsFindEngine/1.0)",
-          accept: "text/html,application/xhtml+xml"
-        }
+        headers: { "user-agent": "Mozilla/5.0 (compatible; FortCrazypantsFindEngine/1.0)", accept: "text/html,application/xhtml+xml" }
       });
       return response.url || url;
-    } finally {
-      clearTimeout(timeout);
-    }
-  } catch {
-    return url;
-  }
+    } finally { clearTimeout(timeout); }
+  } catch { return url; }
 }
 
 async function browserMetadataFallback(url: string) {
@@ -90,58 +93,60 @@ async function browserMetadataFallback(url: string) {
         destinationUrl: payload.data?.url || null,
         images: image && /^https?:\/\//i.test(image) ? [image] : []
       };
-    } finally {
-      clearTimeout(timeout);
-    }
+    } finally { clearTimeout(timeout); }
   } catch { return null; }
 }
 
 export async function POST(req: Request) {
   try {
     const { url } = schema.parse(await req.json());
-
-    // Resolve Amazon short links first. The original short URL is still passed into
-    // inferProductInput below so the affiliate URL/tracking destination is preserved.
-    // We only use the resolved URL to improve product research/title extraction.
     let researchUrl = await resolveDestinationUrl(url);
     let scraped = await scrapeProduct(researchUrl);
     let browserFallbackUsed = false;
 
     scraped = { ...scraped, title: usableProductTitle(scraped.title) };
 
-    // Try browser metadata whenever the title is missing/generic too — not only when
-    // images are missing. This is the key fix for Amazon pages where images/price work
-    // but the social title is merely "Amazon".
     if (scraped.blocked || scraped.images.length === 0 || !usableProductTitle(scraped.title)) {
       let fallback = await browserMetadataFallback(researchUrl);
-
-      // If direct redirect resolution was blocked, Microlink may still resolve the
-      // amzn.to URL. Use its destination and make one more metadata pass there.
       if ((!fallback?.title || researchUrl === url) && /(^|\.)amzn\.to$/i.test(new URL(url).hostname)) {
         const shortFallback = await browserMetadataFallback(url);
         const destination = shortFallback?.destinationUrl;
         if (destination && /^https?:\/\//i.test(destination) && destination !== url) {
           researchUrl = destination;
+          // IMPORTANT: scrape the resolved Amazon product page itself. This can recover the
+          // real <title>, price, gallery and About-this-item data even when social metadata
+          // from Microlink is only the generic Amazon/Amazon Fresh preview.
+          const resolvedScrape = await scrapeProduct(destination);
+          if (usableProductTitle(resolvedScrape.title) || resolvedScrape.images.length || resolvedScrape.price) {
+            scraped = {
+              ...scraped,
+              title: usableProductTitle(resolvedScrape.title) || scraped.title,
+              price: resolvedScrape.price || scraped.price,
+              description: resolvedScrape.description || scraped.description,
+              images: resolvedScrape.images.length ? resolvedScrape.images : scraped.images,
+              blocked: resolvedScrape.blocked
+            };
+          }
           const destinationFallback = await browserMetadataFallback(destination);
           fallback = destinationFallback?.title ? destinationFallback : (shortFallback || fallback);
-        } else if (shortFallback) {
-          fallback = shortFallback;
-        }
+        } else if (shortFallback) fallback = shortFallback;
       }
 
       if (fallback) {
-        browserFallbackUsed = fallback.images.length > 0 || Boolean(fallback.title);
+        const fallbackImages = isAmazonUrl(researchUrl)
+          ? fallback.images.filter(image => !isAmazonGenericImage(image))
+          : fallback.images;
+        browserFallbackUsed = fallbackImages.length > 0 || Boolean(fallback.title);
         scraped = {
           ...scraped,
           title: usableProductTitle(scraped.title) || fallback.title || null,
           description: scraped.description || fallback.description || null,
-          images: scraped.images.length ? scraped.images : fallback.images
+          // Never replace an Amazon product gallery with Amazon Fresh/site-brand artwork.
+          images: scraped.images.length ? scraped.images : fallbackImages
         };
       }
     }
 
-    // A resolved Amazon URL often contains a descriptive product slug. Use that before
-    // falling back to the original short URL, which only contains an opaque short code.
     if (!usableProductTitle(scraped.title)) {
       const resolvedTitle = usableProductTitle(titleFromProductUrl(researchUrl));
       const originalTitle = usableProductTitle(titleFromProductUrl(url));
@@ -150,11 +155,8 @@ export async function POST(req: Request) {
 
     const inference = inferProductInput(scraped, url);
     const research = buildResearchSummary(scraped, inference);
-
     return NextResponse.json({
-      scraped,
-      research,
-      ...inference,
+      scraped, research, ...inference,
       resolvedResearchUrl: researchUrl !== url ? researchUrl : undefined,
       fallbackUsed: Boolean(scraped.blocked || browserFallbackUsed),
       browserFallbackUsed,
