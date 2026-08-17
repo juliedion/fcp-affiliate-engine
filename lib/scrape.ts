@@ -218,6 +218,24 @@ function isBlockedOrMaintenancePage(html: string): boolean {
   return /site maintenance|temporarily unavailable|access denied|request blocked|captcha|robot check|please verify you are human|service unavailable|currently undergoing maintenance/i.test(html);
 }
 
+// Retailers often embed the real gallery URLs in hydration/state JSON even when they omit
+// JSON-LD and Open Graph product images. Pull likely product-image URLs from the raw HTML
+// as a generic fallback. This intentionally rejects logos/icons/tracking pixels and tiny assets.
+function extractEmbeddedProductImages(html: string): string[] {
+  const decoded = html
+    .replace(/\\u002F/gi, "/")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&");
+
+  const matches = decoded.match(/https?:\/\/[^"'<>\s\\]+?\.(?:jpe?g|png|webp)(?:\?[^"'<>\s\\]*)?/gi) || [];
+  const cleaned = matches
+    .map(src => src.replace(/[),;]+$/, ""))
+    .filter(src => !/logo|icon|sprite|favicon|badge|pixel|tracking|analytics|placeholder|loader|spinner/i.test(src))
+    .filter(src => !/[?&](?:w|width|h|height)=(?:[1-9]|[1-9]\d)(?:&|$)/i.test(src));
+
+  return Array.from(new Set(cleaned)).slice(0, 12);
+}
+
 export async function scrapeProduct(url: string): Promise<ScrapedProduct & { blocked?: boolean }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
@@ -232,7 +250,13 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct & { blo
     clearTimeout(timeout);
   }
 
-  if (isBotCheckPage(html) || isBlockedOrMaintenancePage(html)) {
+  const blocked = isBotCheckPage(html) || isBlockedOrMaintenancePage(html);
+  const embeddedImages = extractEmbeddedProductImages(html);
+
+  // A challenge page can still contain retailer hydration data with usable product imagery.
+  // Keep those images instead of throwing them away. If the response contains nothing useful,
+  // preserve the existing blocked behavior so the UI can request manual details.
+  if (blocked && embeddedImages.length === 0) {
     return { title: null, price: null, images: [], description: null, blocked: true };
   }
 
@@ -255,8 +279,10 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct & { blo
     jsonLdProduct?.images?.length
       ? jsonLdProduct.images
       : ogImages.length > 0
-        ? Array.from(new Set(ogImages)).slice(0, 5)
-        : extractAmazonHiResImages(html);
+        ? Array.from(new Set(ogImages)).slice(0, 8)
+        : embeddedImages.length > 0
+          ? embeddedImages
+          : extractAmazonHiResImages(html);
 
   const ogDescription =
     metaContent(html, "property", "og:description") ||
@@ -265,7 +291,7 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct & { blo
     jsonLdProduct?.description ||
     (!isGenericTitle(ogDescription) ? ogDescription : extractAmazonFeatureBullets(html));
 
-  return { title, price, images, description };
+  return { title, price, images, description, ...(blocked ? { blocked: true } : {}) };
 }
 
 const CATEGORY_TAXONOMY: { category: string; audience: string; problem: string; demoFactor: number; keywords: string[] }[] = [
