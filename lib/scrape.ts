@@ -52,6 +52,65 @@ function extractJsonLdPrice(html: string): number | null {
   return null;
 }
 
+
+function extractJsonLdProduct(html: string): {
+  title: string | null;
+  price: number | null;
+  images: string[];
+  description: string | null;
+} | null {
+  const scripts = Array.from(
+    html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)
+  );
+
+  for (const s of scripts) {
+    try {
+      const parsed = JSON.parse(s[1].trim());
+      const roots = Array.isArray(parsed) ? parsed : [parsed];
+
+      for (const root of roots) {
+        const candidates = Array.isArray(root?.["@graph"]) ? root["@graph"] : [root];
+
+        for (const candidate of candidates) {
+          const types = Array.isArray(candidate?.["@type"]) ? candidate["@type"] : [candidate?.["@type"]];
+          const isProduct = types.some(
+            (t: unknown) => typeof t === "string" && t.toLowerCase() === "product"
+          );
+          if (!isProduct) continue;
+
+          const imageValue = candidate?.image;
+          const images = Array.isArray(imageValue)
+            ? imageValue.filter((x: unknown): x is string => typeof x === "string")
+            : typeof imageValue === "string"
+              ? [imageValue]
+              : [];
+
+          const offer = Array.isArray(candidate?.offers) ? candidate.offers[0] : candidate?.offers;
+          const rawPrice = offer?.price ?? offer?.lowPrice ?? null;
+          const n = rawPrice == null ? null : Number(rawPrice);
+          const price = n != null && !Number.isNaN(n) && n > 0 ? n : null;
+
+          return {
+            title: typeof candidate?.name === "string" ? decodeEntities(candidate.name) : null,
+            price,
+            images: Array.from(new Set(images)).slice(0, 5),
+            description:
+              typeof candidate?.description === "string"
+                ? decodeEntities(candidate.description.replace(/<[^>]+>/g, " "))
+                    .replace(/\s+/g, " ")
+                    .trim()
+                : null
+          };
+        }
+      }
+    } catch {
+      // ignore malformed JSON-LD blocks
+    }
+  }
+
+  return null;
+}
+
 function extractPrice(html: string): number | null {
   const metaPrice = metaContent(html, "property", "og:price:amount") || metaContent(html, "property", "product:price:amount");
   if (metaPrice) {
@@ -155,6 +214,10 @@ function isBotCheckPage(html: string): boolean {
   return /Type the characters you see|api-services-support@amazon\.com|Enter the characters you see below/i.test(html);
 }
 
+function isBlockedOrMaintenancePage(html: string): boolean {
+  return /site maintenance|temporarily unavailable|access denied|request blocked|captcha|robot check|please verify you are human|service unavailable|currently undergoing maintenance/i.test(html);
+}
+
 export async function scrapeProduct(url: string): Promise<ScrapedProduct & { blocked?: boolean }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
@@ -169,22 +232,38 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct & { blo
     clearTimeout(timeout);
   }
 
-  if (isBotCheckPage(html)) {
+  if (isBotCheckPage(html) || isBlockedOrMaintenancePage(html)) {
     return { title: null, price: null, images: [], description: null, blocked: true };
   }
+
+  const jsonLdProduct = extractJsonLdProduct(html);
 
   const ogTitle = metaContent(html, "property", "og:title");
   const titleTagMatch = html.match(/<title>([^<]*)<\/title>/i);
   const titleTag = titleTagMatch ? cleanAmazonTitle(decodeEntities(titleTagMatch[1])) : null;
-  const title = !isGenericTitle(ogTitle) ? ogTitle : (!isGenericTitle(titleTag) ? titleTag : (ogTitle || titleTag));
+  const title =
+    jsonLdProduct?.title ||
+    (!isGenericTitle(ogTitle)
+      ? ogTitle
+      : (!isGenericTitle(titleTag) ? titleTag : (ogTitle || titleTag)));
 
-  const price = extractPrice(html);
+  const price = jsonLdProduct?.price || extractPrice(html);
 
-  const ogImages = allMetaContent(html, "property", "og:image").filter(src => !/share-icons|\/logo[./]/i.test(src));
-  const images = ogImages.length > 0 ? Array.from(new Set(ogImages)).slice(0, 5) : extractAmazonHiResImages(html);
+  const ogImages = allMetaContent(html, "property", "og:image")
+    .filter(src => !/share-icons|\/logo[./]/i.test(src));
+  const images =
+    jsonLdProduct?.images?.length
+      ? jsonLdProduct.images
+      : ogImages.length > 0
+        ? Array.from(new Set(ogImages)).slice(0, 5)
+        : extractAmazonHiResImages(html);
 
-  const ogDescription = metaContent(html, "property", "og:description") || metaContent(html, "name", "description");
-  const description = !isGenericTitle(ogDescription) ? ogDescription : extractAmazonFeatureBullets(html);
+  const ogDescription =
+    metaContent(html, "property", "og:description") ||
+    metaContent(html, "name", "description");
+  const description =
+    jsonLdProduct?.description ||
+    (!isGenericTitle(ogDescription) ? ogDescription : extractAmazonFeatureBullets(html));
 
   return { title, price, images, description };
 }
