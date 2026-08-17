@@ -21,23 +21,35 @@ const schema = z.object({
   });
 
 function cleanMarketplaceTitle(name: string): string {
-  let title = name.replace(/\s+/g, " ").trim();
-  const separators = [" - ", " – ", " — ", " | "];
+  let title = name.replace(/^amazon(?:\.com)?\s*[:\-–—]\s*/i, "").replace(/\s+/g, " ").trim();
+
+  const audienceBreak = title.search(/\s+for\s+(?:artists|diyers|crafters|makers|kids|adults|home|office|travel|camping)\b/i);
+  if (audienceBreak >= 24) title = title.slice(0, audienceBreak).trim();
+
+  const marketingBreak = title.search(/\s+(?:engrave|includes|with|featuring)\s+\d+/i);
+  if (marketingBreak >= 24) title = title.slice(0, marketingBreak).trim();
+
+  const separators = [",", " - ", " – ", " — ", " | "];
   for (const sep of separators) {
     const i = title.indexOf(sep);
-    if (i >= 24 && i <= 78) {
+    if (i >= 24 && i <= 85) {
       title = title.slice(0, i).trim();
       break;
     }
   }
-  const comma = title.indexOf(",");
-  if (comma >= 24 && comma <= 78) title = title.slice(0, comma).trim();
-  if (title.length > 72) {
-    const cut = title.slice(0, 72);
+
+  // Remove obvious Amazon keyword-stuffing tail while keeping a useful product type.
+  title = title
+    .replace(/\s+ultimate\s+cordless\s+portable\s+tool$/i, "")
+    .replace(/\s+cordless\s+portable\s+tool$/i, "")
+    .trim();
+
+  if (title.length > 64) {
+    const cut = title.slice(0, 64);
     const space = cut.lastIndexOf(" ");
-    title = (space > 28 ? cut.slice(0, space) : cut).trim();
+    title = (space > 30 ? cut.slice(0, space) : cut).trim();
   }
-  return title;
+  return title || name.trim();
 }
 
 function sentenceChunks(text: string): string[] {
@@ -52,27 +64,31 @@ function polishWithoutAi<T extends {
   name: string; problem: string; features: string; audience: string; category: string; sourceDescription: string;
 }>(input: T): T {
   const source = input.sourceDescription.trim();
-  const sourceLower = source.toLowerCase();
+  const combined = `${input.name} ${source} ${input.features}`.toLowerCase();
   const name = cleanMarketplaceTitle(input.name);
+  const isEngraving = /engrav|engraver|engraving pen|rotary tool|etch|customiz|personaliz/.test(combined);
 
   let audience = input.audience;
-  if (/artist|diy|crafter|craft|engraving|woodwork|maker/.test(`${name} ${source}`.toLowerCase())) {
-    audience = "artists, DIYers, crafters, and makers";
-  }
+  if (isEngraving) audience = "artists, DIYers, crafters, and makers";
 
   let problem = input.problem;
-  if (!problem || /everyday inconvenience|everyday frustration|daily routine/i.test(problem)) {
-    if (/engrav|customiz|personaliz/.test(`${name} ${source}`.toLowerCase())) {
-      problem = "personalizing and engraving projects without needing bulky, complicated equipment";
-    } else if (source) {
-      const first = sentenceChunks(source)[0];
-      if (first) problem = first.replace(/^buy\s+/i, "").replace(/[.!?]+$/, "");
-    }
+  if (isEngraving) {
+    problem = "personalizing crafts and DIY projects without needing a bulky full-size engraving setup";
+  } else if (!problem || /everyday inconvenience|everyday frustration|daily routine/i.test(problem)) {
+    const first = sentenceChunks(source)[0];
+    if (first) problem = first.replace(/^buy\s+/i, "").replace(/[.!?]+$/, "");
   }
 
   let features = input.features;
-  const currentLooksGeneric = !features || /durable design|easy to use|compact footprint/i.test(features);
-  if (source && currentLooksGeneric) {
+  if (isEngraving) {
+    const facts: string[] = [];
+    if (/50\+\s*surfaces/i.test(source)) facts.push("works across 50+ listed surfaces");
+    if (/30\s*bits?/i.test(source)) facts.push("includes 30 engraving bits");
+    if (/rechargeable/i.test(source)) facts.push("rechargeable cordless design");
+    if (/beginner/i.test(source)) facts.push("beginner-friendly setup");
+    if (/mastery guide/i.test(source)) facts.push("includes a mastery guide");
+    features = facts.length ? facts.join(", ") : (source || input.features || "cordless engraving pen, interchangeable engraving bits, rechargeable design");
+  } else if (source && (!features || /durable design|easy to use|compact footprint/i.test(features))) {
     const chunks = sentenceChunks(source)
       .map(s => s.replace(/^buy\s+/i, "").replace(/[.!?]+$/, ""))
       .filter(s => !/^amazon/i.test(s))
@@ -81,9 +97,7 @@ function polishWithoutAi<T extends {
   }
 
   let category = input.category;
-  if (/engraving pen|engraver|engraving tool/i.test(`${name} ${source}`) && /general merchandise|home & lifestyle/i.test(category)) {
-    category = "Craft Tools & Engraving";
-  }
+  if (isEngraving) category = "Craft Tools & Engraving";
 
   return { ...input, name, problem, features, audience, category };
 }
