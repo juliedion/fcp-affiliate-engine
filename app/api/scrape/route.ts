@@ -7,85 +7,80 @@ import {
 } from "@/lib/scrape";
 import { formatApiError } from "@/lib/apiError";
 
-const schema = z.object({
-  url: z.string().url()
-});
+const schema = z.object({ url: z.string().url() });
 
 function titleFromProductUrl(url: string): string {
   try {
     const parsed = new URL(url);
-
-    const ignoredSegments = new Set([
-      "p",
-      "product",
-      "products",
-      "dp",
-      "gp"
-    ]);
-
-    const segments = parsed.pathname
-      .split("/")
-      .map(segment => segment.trim())
-      .filter(Boolean)
-      .filter(segment => !ignoredSegments.has(segment.toLowerCase()));
-
-    if (!segments.length) return "";
-
-    // Prefer the longest human-readable URL segment.
-    // Retailer product IDs tend to be short or mostly numeric/alphanumeric.
-    const candidates = segments
-      .map(segment => decodeURIComponent(segment))
-      .filter(segment => {
-        const letters = (segment.match(/[a-z]/gi) || []).length;
-        const separators = (segment.match(/[-_]/g) || []).length;
-
-        return letters >= 8 && separators >= 1;
-      })
-      .sort((a, b) => b.length - a.length);
-
+    const ignoredSegments = new Set(["p", "product", "products", "dp", "gp"]);
+    const segments = parsed.pathname.split("/").map(s => s.trim()).filter(Boolean).filter(s => !ignoredSegments.has(s.toLowerCase()));
+    const candidates = segments.map(s => decodeURIComponent(s)).filter(segment => {
+      const letters = (segment.match(/[a-z]/gi) || []).length;
+      const separators = (segment.match(/[-_]/g) || []).length;
+      return letters >= 8 && separators >= 1;
+    }).sort((a, b) => b.length - a.length);
     const slug = candidates[0];
     if (!slug) return "";
+    return slug.replace(/[-_]+/g, " ").replace(/\b\d{8,}\b/g, "").replace(/\s+/g, " ").trim().replace(/\b\w/g, c => c.toUpperCase()).replace(/\s+[A-Z0-9]{15,}$/i, "").trim();
+  } catch { return ""; }
+}
 
-    let title = slug
-      .replace(/[-_]+/g, " ")
-      .replace(/\b\d{8,}\b/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/\b\w/g, char => char.toUpperCase());
+type MicrolinkData = {
+  status?: string;
+  data?: {
+    title?: string | null;
+    description?: string | null;
+    image?: { url?: string | null } | null;
+    logo?: { url?: string | null } | null;
+  };
+};
 
-    // Remove common retailer SKU-like suffixes if they leak into the slug.
-    title = title
-      .replace(/\s+[A-Z0-9]{15,}$/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    return title;
-  } catch {
-    return "";
-  }
+async function browserMetadataFallback(url: string) {
+  try {
+    const endpoint = `https://api.microlink.io/?url=${encodeURIComponent(url)}&meta=true&screenshot=false&video=false&audio=false`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(endpoint, { signal: controller.signal, cache: "no-store" });
+      if (!response.ok) return null;
+      const payload = await response.json() as MicrolinkData;
+      const image = payload.data?.image?.url;
+      return {
+        title: payload.data?.title || null,
+        description: payload.data?.description || null,
+        images: image && /^https?:\/\//i.test(image) ? [image] : []
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch { return null; }
 }
 
 export async function POST(req: Request) {
   try {
     const { url } = schema.parse(await req.json());
-
     let scraped = await scrapeProduct(url);
+    let browserFallbackUsed = false;
 
-    /*
-     * Retailers such as DICK'S can serve Vercel a maintenance/bot-protection
-     * page even though the real product works normally in a browser.
-     *
-     * In that situation, do NOT fabricate price, description, or images.
-     * Recover only the product name from the URL so the user can enter the
-     * missing price/photo and continue through Make It Crazypants.
-     */
+    // If the retailer blocks our normal server fetch or simply exposes no image,
+    // ask a browser-metadata service for the page's social/product image. This
+    // keeps manual upload as a last resort without fabricating a product photo.
+    if (scraped.blocked || scraped.images.length === 0) {
+      const fallback = await browserMetadataFallback(url);
+      if (fallback) {
+        browserFallbackUsed = fallback.images.length > 0;
+        scraped = {
+          ...scraped,
+          title: scraped.title || fallback.title || null,
+          description: scraped.description || fallback.description || null,
+          images: scraped.images.length ? scraped.images : fallback.images
+        };
+      }
+    }
+
     if (scraped.blocked || !scraped.title) {
       const fallbackTitle = titleFromProductUrl(url);
-
-      scraped = {
-        ...scraped,
-        title: scraped.title || fallbackTitle || null
-      };
+      scraped = { ...scraped, title: scraped.title || fallbackTitle || null };
     }
 
     const inference = inferProductInput(scraped, url);
@@ -95,17 +90,15 @@ export async function POST(req: Request) {
       scraped,
       research,
       ...inference,
-      fallbackUsed: Boolean(scraped.blocked),
+      fallbackUsed: Boolean(scraped.blocked || browserFallbackUsed),
+      browserFallbackUsed,
       fallbackReason: scraped.blocked
-        ? "Retailer blocked automatic product research. Product name was recovered from the URL when possible; verify price and image before generating."
+        ? browserFallbackUsed
+          ? "Retailer blocked direct research; product image/metadata recovered with the browser fallback. Verify price before generating."
+          : "Retailer blocked automatic product research. Product name was recovered when possible; verify price and image before generating."
         : null
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: formatApiError(error, "Could not read that URL")
-      },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: formatApiError(error, "Could not read that URL") }, { status: 400 });
   }
 }
