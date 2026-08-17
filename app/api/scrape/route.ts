@@ -9,6 +9,17 @@ import { formatApiError } from "@/lib/apiError";
 
 const schema = z.object({ url: z.string().url() });
 
+const GENERIC_RETAILER_TITLES = new Set([
+  "amazon", "amazon.com", "walmart", "walmart.com", "target", "target.com",
+  "etsy", "ebay", "qvc", "qvc.com", "dick's sporting goods", "dicks sporting goods"
+]);
+
+function usableProductTitle(value: string | null | undefined): string | null {
+  const title = value?.trim();
+  if (!title || GENERIC_RETAILER_TITLES.has(title.toLowerCase())) return null;
+  return title;
+}
+
 function titleFromProductUrl(url: string): string {
   try {
     const parsed = new URL(url);
@@ -46,7 +57,7 @@ async function browserMetadataFallback(url: string) {
       const payload = await response.json() as MicrolinkData;
       const image = payload.data?.image?.url;
       return {
-        title: payload.data?.title || null,
+        title: usableProductTitle(payload.data?.title),
         description: payload.data?.description || null,
         images: image && /^https?:\/\//i.test(image) ? [image] : []
       };
@@ -62,25 +73,30 @@ export async function POST(req: Request) {
     let scraped = await scrapeProduct(url);
     let browserFallbackUsed = false;
 
-    // If the retailer blocks our normal server fetch or simply exposes no image,
-    // ask a browser-metadata service for the page's social/product image. This
-    // keeps manual upload as a last resort without fabricating a product photo.
+    // Never allow a retailer/site name (for example Amazon) to become the Shopify
+    // product title. Amazon frequently returns generic social metadata even when
+    // the gallery and price are usable.
+    scraped = { ...scraped, title: usableProductTitle(scraped.title) };
+
     if (scraped.blocked || scraped.images.length === 0) {
       const fallback = await browserMetadataFallback(url);
       if (fallback) {
         browserFallbackUsed = fallback.images.length > 0;
         scraped = {
           ...scraped,
-          title: scraped.title || fallback.title || null,
+          title: usableProductTitle(scraped.title) || fallback.title || null,
           description: scraped.description || fallback.description || null,
           images: scraped.images.length ? scraped.images : fallback.images
         };
       }
     }
 
-    if (scraped.blocked || !scraped.title) {
-      const fallbackTitle = titleFromProductUrl(url);
-      scraped = { ...scraped, title: scraped.title || fallbackTitle || null };
+    // URL-derived titles are useful for descriptive retailer slugs, but Amazon's
+    // short /dp/ASIN links contain no product name. In that case leave the title
+    // empty instead of silently publishing a product named "Amazon".
+    if (!usableProductTitle(scraped.title)) {
+      const fallbackTitle = usableProductTitle(titleFromProductUrl(url));
+      scraped = { ...scraped, title: fallbackTitle };
     }
 
     const inference = inferProductInput(scraped, url);
@@ -94,8 +110,8 @@ export async function POST(req: Request) {
       browserFallbackUsed,
       fallbackReason: scraped.blocked
         ? browserFallbackUsed
-          ? "Retailer blocked direct research; product image/metadata recovered with the browser fallback. Verify price before generating."
-          : "Retailer blocked automatic product research. Product name was recovered when possible; verify price and image before generating."
+          ? "Retailer blocked direct research; product image/metadata recovered with the browser fallback. Verify product name and price before generating."
+          : "Retailer blocked automatic product research. Verify product name, price, and image before generating."
         : null
     });
   } catch (error) {
