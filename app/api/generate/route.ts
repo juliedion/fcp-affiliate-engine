@@ -38,7 +38,6 @@ function cleanMarketplaceTitle(name: string): string {
     }
   }
 
-  // Remove obvious Amazon keyword-stuffing tail while keeping a useful product type.
   title = title
     .replace(/\s+ultimate\s+cordless\s+portable\s+tool$/i, "")
     .replace(/\s+cordless\s+portable\s+tool$/i, "")
@@ -102,21 +101,75 @@ function polishWithoutAi<T extends {
   return { ...input, name, problem, features, audience, category };
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function capitalizeSentence(value: string): string {
+  const clean = value.trim().replace(/[.!?]+$/, "");
+  return clean ? clean.charAt(0).toUpperCase() + clean.slice(1) : clean;
+}
+
+function buildSpecificDescriptionHtml(input: {
+  name: string; problem: string; features: string; audience: string; category: string; fcpVerdict?: string;
+}): string {
+  const name = escapeHtml(input.name.trim());
+  const audience = input.audience.trim() || "shoppers";
+  const problem = capitalizeSentence(input.problem || "making the task simpler");
+
+  const featureItems = input.features
+    .split(/[,\n•|]+/)
+    .map(x => x.trim().replace(/[.!?]+$/, ""))
+    .filter(x => x.length > 2)
+    .filter((x, i, arr) => arr.findIndex(y => y.toLowerCase() === x.toLowerCase()) === i)
+    .slice(0, 6);
+
+  const bullets = featureItems.length
+    ? featureItems.map(x => `<li>${escapeHtml(capitalizeSentence(x))}.</li>`).join("")
+    : `<li>Designed specifically for ${escapeHtml(input.category.toLowerCase())} use.</li>`;
+
+  const lead = `<p><strong>${name}</strong> is a practical pick for ${escapeHtml(audience)} who want help with ${escapeHtml(problem.charAt(0).toLowerCase() + problem.slice(1))}. Instead of generic product-page filler, this listing focuses on the actual details that make this product useful.</p>`;
+
+  const benefit = featureItems.length
+    ? `<p>What stands out most is ${escapeHtml(featureItems.slice(0, 3).join(", "))}. Those are the details that make it easier to understand exactly what you're getting and where it fits into your routine.</p>`
+    : "";
+
+  const verdict = input.fcpVerdict?.trim()
+    ? escapeHtml(input.fcpVerdict.trim())
+    : `If ${escapeHtml(input.problem || "this is a problem you deal with")}, this is the kind of find worth a closer look.`;
+
+  return `<h2>Why You'll Love It</h2>${lead}<ul>${bullets}</ul>${benefit}<p><strong>Fort Crazypants verdict:</strong> ${verdict}</p>`;
+}
+
 export async function POST(req: Request) {
   try {
     const input = schema.parse(await req.json());
     const baseInput = polishWithoutAi(input);
 
+    // Always replace the old template description with a product-specific rewrite first.
+    // If OpenAI is configured, the AI rewrite below can improve this further. If OpenAI is
+    // missing or the request fails, shoppers still get a real rewritten description rather
+    // than the generic "helps busy households / everyday inconvenience" template.
+    const deterministicBase = generateProduct(baseInput);
+    const deterministic = {
+      ...deterministicBase,
+      descriptionHtml: buildSpecificDescriptionHtml(baseInput)
+    };
+
     if (!isAiCopyEnabled()) {
-      return NextResponse.json({ ...generateProduct(baseInput), aiCopyUsed: false });
+      return NextResponse.json({ ...deterministic, aiCopyUsed: false, descriptionRewriteUsed: true });
     }
 
     const facts = await generateAIProductFacts(baseInput);
     const workingInput = facts ? { ...baseInput, ...facts } : baseInput;
-    const deterministic = generateProduct(workingInput);
+    const regeneratedBase = generateProduct(workingInput);
+    const regenerated = {
+      ...regeneratedBase,
+      descriptionHtml: buildSpecificDescriptionHtml(workingInput)
+    };
 
-    const overrides = await generateAICopy(workingInput, deterministic);
-    return NextResponse.json({ ...applyAiCopy(deterministic, overrides), aiCopyUsed: Boolean(facts || overrides) });
+    const overrides = await generateAICopy(workingInput, regenerated);
+    return NextResponse.json({ ...applyAiCopy(regenerated, overrides), aiCopyUsed: Boolean(facts || overrides), descriptionRewriteUsed: true });
   } catch (error) {
     return NextResponse.json({ error: formatApiError(error, "Invalid product data") }, { status: 400 });
   }
