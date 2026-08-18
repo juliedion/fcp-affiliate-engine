@@ -113,9 +113,6 @@ export async function POST(req: Request) {
         const destination = shortFallback?.destinationUrl;
         if (destination && /^https?:\/\//i.test(destination) && destination !== url) {
           researchUrl = destination;
-          // IMPORTANT: scrape the resolved Amazon product page itself. This can recover the
-          // real <title>, price, gallery and About-this-item data even when social metadata
-          // from Microlink is only the generic Amazon/Amazon Fresh preview.
           const resolvedScrape = await scrapeProduct(destination);
           if (usableProductTitle(resolvedScrape.title) || resolvedScrape.images.length || resolvedScrape.price) {
             scraped = {
@@ -141,7 +138,6 @@ export async function POST(req: Request) {
           ...scraped,
           title: usableProductTitle(scraped.title) || fallback.title || null,
           description: scraped.description || fallback.description || null,
-          // Never replace an Amazon product gallery with Amazon Fresh/site-brand artwork.
           images: scraped.images.length ? scraped.images : fallbackImages
         };
       }
@@ -155,8 +151,16 @@ export async function POST(req: Request) {
 
     const inference = inferProductInput(scraped, url);
     const research = buildResearchSummary(scraped, inference);
+
+    // Keep the internal numeric 0 for scoring/research, but send an empty price field to
+    // the UI when no real retailer price was found. That way the user sees a blank field
+    // to fill in instead of a misleading auto-entered 0.
+    const uiInput = scraped.price == null
+      ? { ...inference.input, price: "" }
+      : inference.input;
+
     return NextResponse.json({
-      scraped, research, ...inference,
+      scraped, research, ...inference, input: uiInput,
       resolvedResearchUrl: researchUrl !== url ? researchUrl : undefined,
       fallbackUsed: Boolean(scraped.blocked || browserFallbackUsed),
       browserFallbackUsed,
