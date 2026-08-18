@@ -86,67 +86,102 @@ function cleanFact(value: string): string {
   return value.trim().replace(/^[-•]+\s*/, "").replace(/[.!?]+$/, "").replace(/\s+/g, " ");
 }
 
+function splitFacts(features: string): string[] {
+  return features.split(/[,\n•|]+/).map(cleanFact).filter(x => x.length > 2)
+    .filter((x, i, a) => a.findIndex(y => y.toLowerCase() === x.toLowerCase()) === i).slice(0, 6);
+}
+
 function benefitFromFeature(feature: string): string {
   const f = cleanFact(feature);
   const low = f.toLowerCase();
-  if (/50\+.*surfaces/.test(low)) return "Use it on 50+ listed surfaces, so one tool can handle a wide range of craft and personalization projects.";
-  if (/30.*bits/.test(low)) return "Thirty included engraving bits give you more options for detail work, lettering, textures, and different materials.";
-  if (/rechargeable.*cordless|cordless.*rechargeable/.test(low)) return "The rechargeable cordless design lets you work without being tethered to an outlet.";
-  if (/beginner/.test(low)) return "Beginner-friendly controls make it easier to start creating without a steep learning curve.";
-  if (/mastery guide|guide included/.test(low)) return "An included guide helps you get comfortable with the tool and try more techniques.";
-  if (/airtight/.test(low)) return "Airtight lids help keep ingredients covered and make leftovers easier to store.";
-  if (/pull.?out|slide.?out/.test(low)) return "The pull-out design brings hard-to-reach items forward instead of making you dig through the cabinet.";
-  if (/collaps|fold/.test(low)) return "It folds down when you are done, making storage and transport much easier.";
-  if (/absorb/.test(low)) return "The absorbent surface helps contain drips and keeps the surrounding counter drier.";
-  if (/smart|app|remind/.test(low)) return "Smart reminders make it easier to stay on top of the routine without constantly thinking about it.";
-  if (/large|350l|capacity/.test(low)) return `${f.charAt(0).toUpperCase() + f.slice(1)} gives you useful extra room when you need to haul more at once.`;
-  return `${f.charAt(0).toUpperCase() + f.slice(1)}.`;
+  if (/50\+.*surfaces/.test(low)) return "One tool can handle a wide range of personalization projects instead of needing a different setup for each material.";
+  if (/30.*bits/.test(low)) return "You have more options for lettering, detail work, texture, and finishing without buying a separate bit set right away.";
+  if (/rechargeable.*cordless|cordless.*rechargeable/.test(low)) return "You can work where the project is instead of arranging everything around the nearest outlet.";
+  if (/beginner/.test(low)) return "It is easier to get started without feeling like you need advanced tool experience first.";
+  if (/mastery guide|guide included/.test(low)) return "The included guidance helps shorten the learning curve and gives you a clearer starting point.";
+  if (/airtight/.test(low)) return "Ingredients and leftovers can stay covered in the same bowls, cutting down on extra containers and cleanup.";
+  if (/pull.?out|slide.?out/.test(low)) return "Items at the back come to you, so you spend less time unloading the cabinet just to reach one thing.";
+  if (/collaps|fold/.test(low)) return "You get the carrying capacity when you need it without giving up permanent storage space when you do not.";
+  if (/absorb/.test(low)) return "Drips stay contained in one place, which means less water spreading across the counter after dishes.";
+  if (/smart|app|remind/.test(low)) return "The reminder system takes some of the mental load out of remembering the routine yourself.";
+  if (/large|350l|capacity/.test(low)) return "You can move more in a single trip, which is especially useful for bulky family gear and outdoor outings.";
+  return "It adds useful functionality without requiring extra steps or a complicated setup.";
 }
 
-function buildSpecificDescriptionHtml(input: {
-  name: string; problem: string; features: string; audience: string; category: string; sourceDescription: string; fcpVerdict?: string;
-}): string {
+function realSpecification(feature: string): boolean {
+  const f = feature.toLowerCase();
+  return /\d|inch|inches|\bl\b|liter|litre|oz|ounce|lb|pound|watt|volt|mah|usb|battery|rechargeable|cordless|stainless|steel|aluminum|aluminium|silicone|microfiber|wood|plastic|material|compatible|includes?|pieces?|pack|capacity|dimension|size|surface/.test(f);
+}
+
+function proseDescription(input: { name: string; problem: string; features: string; audience: string; category: string; sourceDescription: string; fcpVerdict?: string; }): string {
   const title = input.name.trim();
   const combined = `${title} ${input.category} ${input.features} ${input.sourceDescription}`.toLowerCase();
-  const features = input.features.split(/[,\n•|]+/).map(cleanFact).filter(Boolean).filter((x, i, a) => a.findIndex(y => y.toLowerCase() === x.toLowerCase()) === i).slice(0, 5);
-  const bullets = features.map(f => `<li>${escapeHtml(benefitFromFeature(f))}</li>`).join("");
-
   let intro: string;
-  let closer: string;
+  let useCase: string;
+
   if (/engrav|etch|customiz|personaliz/.test(combined)) {
-    intro = `${title} is a compact cordless engraving tool made for turning everyday objects into personalized projects. Use it for names, designs, lettering, details, and decorative touches without setting up a full-size rotary station.`;
-    closer = "A strong fit for crafters, DIYers, gift makers, and anyone who likes putting a custom touch on things they already own.";
+    intro = `${title} gives you a compact way to personalize everyday objects without setting up a full-size rotary station. It is made for the kind of projects where you want to add names, lettering, decorative details, or a custom finish and then put the tool away when you are done.`;
+    useCase = "That makes it especially appealing for crafters, DIYers, gift makers, and anyone who likes turning ordinary pieces into something personal.";
   } else if (/organiz|spice rack|storage|pull.?out|pantry|cabinet/.test(combined)) {
-    intro = `${title} is designed to make crowded cabinets and storage spaces easier to use. It brings items into view, cuts down on digging and stacking, and helps turn wasted space into storage that actually works.`;
-    closer = "A practical upgrade for anyone who wants a more organized space without a full cabinet makeover.";
+    intro = `${title} tackles one of the most annoying storage problems: having plenty of cabinet space but not being able to reach what is in it. Instead of stacking, digging, and unloading half the shelf, it is designed to make the contents easier to see and grab.`;
+    useCase = "It is the kind of upgrade that makes the space you already have work better without requiring a cabinet remodel.";
   } else if (/mixing bowl|kitchen|cook|bowl/.test(combined)) {
-    intro = `${title} gives you a more organized way to prep, mix, store, and serve without reaching for a different container every time. It is the kind of kitchen set that earns its cabinet space because the pieces work together.`;
-    closer = "Useful for everyday cooking, baking, meal prep, leftovers, and anyone trying to keep kitchen tools from taking over the cabinets.";
+    intro = `${title} is built around a simple kitchen win: fewer separate containers for prep, mixing, serving, and storage. A coordinated set keeps the workflow together and can cut down on the pile of mismatched bowls and lids taking over the cabinet.`;
+    useCase = "It makes the most sense for everyday cooking, baking, meal prep, and leftovers—jobs where the same pieces get reached for again and again.";
   } else if (/wagon|cart|haul|350l/.test(combined)) {
-    intro = `${title} is built for the jobs that are annoying to make three trips for. Load it up for games, beach days, camping, yard work, events, or family outings, then fold it down when the hauling is done.`;
-    closer = "A useful pick when you regularly move bulky gear but do not want a permanent cart taking up storage space.";
+    intro = `${title} is for the moments when carrying everything by hand turns into three unnecessary trips. It gives bulky gear one place to go for games, beach days, camping, yard work, events, and family outings.`;
+    useCase = "The real advantage is having serious hauling help when you need it without dedicating permanent garage space to a rigid cart.";
   } else if (/water bottle|hydration|drink/.test(combined)) {
-    intro = `${title} adds a little accountability to something most of us forget to do: drink enough water. Its smart features help make hydration easier to track throughout the day without turning it into another chore.`;
-    closer = "Especially handy for workdays, workouts, travel, or anyone who realizes at 4 p.m. they barely touched their water bottle.";
+    intro = `${title} is aimed at the part of hydration that is surprisingly hard: remembering to keep drinking throughout the day. Instead of relying on good intentions, it adds a little structure and feedback to a habit that is easy to forget.`;
+    useCase = "It is particularly useful during workdays, workouts, travel, or any routine where your water bottle tends to sit untouched for hours.";
   } else if (/drying mat|absorbent|dish mat/.test(combined)) {
-    intro = `${title} gives wet dishes, glasses, and cookware a dedicated place to drain without leaving a puddle across the counter. It is a simple kitchen upgrade, but one that can make cleanup feel noticeably less messy.`;
-    closer = "A good fit for busy kitchens, small counters, and anyone who is tired of wiping up the same drips after every round of dishes.";
+    intro = `${title} gives wet dishes and cookware a dedicated landing spot instead of letting drips spread across the counter. It is a small change, but it addresses the part of doing dishes that somehow creates another cleanup job afterward.`;
+    useCase = "It is a practical fit for busy kitchens, limited counter space, and anyone tired of wiping up the same puddles every day.";
   } else if (/grill|outdoor kitchen/.test(combined)) {
-    intro = `${title} is made for people who want more than a basic backyard grill. It creates a dedicated outdoor cooking setup with room to prep, cook, organize, and keep everything together in one station.`;
-    closer = "A substantial backyard upgrade for frequent grillers and entertainers who want a more complete outdoor cooking setup.";
+    intro = `${title} is designed for people who want their backyard cooking area to function more like a real kitchen than a standalone grill. The value is having prep, cooking, organization, and serving space work together instead of being scattered across the patio.`;
+    useCase = "It is best suited to frequent grillers and entertainers who will actually use the extra workspace and built-in organization.";
   } else if (/garden bed|planter|garden/.test(combined)) {
-    intro = `${title} creates a contained growing space that is easier to manage than planting directly into the yard. It gives herbs, vegetables, and flowers a defined home while keeping the garden looking intentional.`;
-    closer = "A good choice for gardeners who want a cleaner setup, easier access, and a more finished look in the yard or patio area.";
+    intro = `${title} creates a defined place to grow herbs, vegetables, or flowers without turning a section of the yard into a full garden project. It keeps the growing area contained and gives the space a more intentional, finished look.`;
+    useCase = "It is a good option when you want easier access and a cleaner setup on a patio, deck, or in the yard.";
   } else {
     const problem = cleanFact(input.problem || "");
     intro = problem
-      ? `${title} is designed to solve a very specific annoyance: ${problem.charAt(0).toLowerCase() + problem.slice(1)}. The appeal is simple — it gives you a more practical way to get the job done without adding extra steps.`
-      : `${title} is a practical find built around useful features rather than gimmicks. It is designed to make the task easier, more organized, or more convenient in day-to-day use.`;
-    closer = `Best suited for ${input.audience && !/busy families|busy households/i.test(input.audience) ? input.audience : "anyone who would actually use these features regularly"}.`;
+      ? `${title} is built to address a specific frustration: ${problem.charAt(0).toLowerCase() + problem.slice(1)}. The appeal is that it offers a more straightforward way to handle that job without adding unnecessary complexity.`
+      : `${title} is a practical find centered on making a common task easier to manage.`;
+    useCase = `It is best for ${input.audience && !/busy families|busy households/i.test(input.audience) ? input.audience : "people who would use its core features regularly"}.`;
   }
 
-  const verdict = input.fcpVerdict?.trim() || closer;
-  return `<p>${escapeHtml(intro)}</p>${bullets ? `<h3>Why we like it</h3><ul>${bullets}</ul>` : ""}<p>${escapeHtml(closer)}</p><p><strong>Fort Crazypants take:</strong> ${escapeHtml(verdict)}</p>`;
+  return `<h2>Why You'll Love It</h2><p>${escapeHtml(intro)}</p><p>${escapeHtml(useCase)}</p>`;
+}
+
+function stripListsFromDescription(html: string, fallback: string): string {
+  if (!html || typeof html !== "string") return fallback;
+  let clean = html
+    .replace(/<ul[\s\S]*?<\/ul>/gi, "")
+    .replace(/<ol[\s\S]*?<\/ol>/gi, "")
+    .replace(/<h3[\s\S]*?<\/h3>/gi, "")
+    .replace(/^\s*<h2>.*?<\/h2>/i, "<h2>Why You'll Love It</h2>")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const paragraphs = clean.match(/<p[\s\S]*?<\/p>/gi) || [];
+  if (paragraphs.length < 2) return fallback;
+  return `<h2>Why You'll Love It</h2>${paragraphs.slice(0, 3).join("")}`;
+}
+
+function enforceDistinctSections<T extends { descriptionHtml: string; bullets: string[]; benefits: string[]; specifications: string[]; }>(product: T, input: { name: string; problem: string; features: string; audience: string; category: string; sourceDescription: string; fcpVerdict?: string; }): T {
+  const facts = splitFacts(input.features);
+  const bullets = facts.map(f => f.charAt(0).toUpperCase() + f.slice(1));
+  const benefits = facts.slice(0, 4).map(benefitFromFeature)
+    .filter((x, i, a) => a.indexOf(x) === i && !bullets.some(b => b.toLowerCase() === x.toLowerCase()));
+  const specifications = facts.filter(realSpecification).map(f => f.charAt(0).toUpperCase() + f.slice(1));
+  const fallbackDescription = proseDescription(input);
+  return {
+    ...product,
+    descriptionHtml: stripListsFromDescription(product.descriptionHtml, fallbackDescription),
+    bullets,
+    benefits,
+    specifications
+  };
 }
 
 export async function POST(req: Request) {
@@ -154,18 +189,21 @@ export async function POST(req: Request) {
     const input = schema.parse(await req.json());
     const baseInput = polishWithoutAi(input);
     const deterministicBase = generateProduct(baseInput);
-    const deterministic = { ...deterministicBase, descriptionHtml: buildSpecificDescriptionHtml(baseInput) };
+    const deterministic = enforceDistinctSections({ ...deterministicBase, descriptionHtml: proseDescription(baseInput) }, baseInput);
 
     if (!isAiCopyEnabled()) {
-      return NextResponse.json({ ...deterministic, aiCopyUsed: false, descriptionRewriteUsed: true });
+      return NextResponse.json({ ...deterministic, aiCopyUsed: false, descriptionRewriteUsed: true, distinctSectionsUsed: true });
     }
 
     const facts = await generateAIProductFacts(baseInput);
     const workingInput = facts ? { ...baseInput, ...facts } : baseInput;
     const regeneratedBase = generateProduct(workingInput);
-    const regenerated = { ...regeneratedBase, descriptionHtml: buildSpecificDescriptionHtml(workingInput) };
+    const regenerated = enforceDistinctSections({ ...regeneratedBase, descriptionHtml: proseDescription(workingInput) }, workingInput);
     const overrides = await generateAICopy(workingInput, regenerated);
-    return NextResponse.json({ ...applyAiCopy(regenerated, overrides), aiCopyUsed: Boolean(facts || overrides), descriptionRewriteUsed: true });
+    const withAi = applyAiCopy(regenerated, overrides);
+    const finalProduct = enforceDistinctSections(withAi, workingInput);
+
+    return NextResponse.json({ ...finalProduct, aiCopyUsed: Boolean(facts || overrides), descriptionRewriteUsed: true, distinctSectionsUsed: true });
   } catch (error) {
     return NextResponse.json({ error: formatApiError(error, "Invalid product data") }, { status: 400 });
   }
