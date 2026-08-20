@@ -11,12 +11,21 @@ const schema = z.object({ url: z.string().url() });
 
 const GENERIC_RETAILER_TITLES = new Set([
   "amazon", "amazon.com", "walmart", "walmart.com", "target", "target.com",
-  "etsy", "ebay", "qvc", "qvc.com", "dick's sporting goods", "dicks sporting goods"
+  "etsy", "ebay", "qvc", "qvc.com", "dick's sporting goods", "dicks sporting goods", "mavely"
 ]);
+
+function looksOpaqueToken(value: string): boolean {
+  const v = value.trim();
+  if (v.length < 6 || v.includes(" ")) return false;
+  const hasLower = /[a-z]/.test(v);
+  const hasUpper = /[A-Z]/.test(v);
+  const hasDigit = /\d/.test(v);
+  return /^[A-Za-z0-9_-]+$/.test(v) && ((hasLower && hasUpper) || hasDigit);
+}
 
 function usableProductTitle(value: string | null | undefined): string | null {
   const title = value?.trim();
-  if (!title || GENERIC_RETAILER_TITLES.has(title.toLowerCase())) return null;
+  if (!title || GENERIC_RETAILER_TITLES.has(title.toLowerCase()) || looksOpaqueToken(title)) return null;
   return title;
 }
 
@@ -26,6 +35,7 @@ function titleFromProductUrl(url: string): string {
     const ignoredSegments = new Set(["p", "product", "products", "dp", "gp"]);
     const segments = parsed.pathname.split("/").map(s => s.trim()).filter(Boolean).filter(s => !ignoredSegments.has(s.toLowerCase()));
     const candidates = segments.map(s => decodeURIComponent(s)).filter(segment => {
+      if (looksOpaqueToken(segment)) return false;
       const letters = (segment.match(/[a-z]/gi) || []).length;
       const separators = (segment.match(/[-_]/g) || []).length;
       return letters >= 8 && separators >= 1;
@@ -54,6 +64,11 @@ function isAmazonUrl(value: string | null | undefined): boolean {
   } catch { return false; }
 }
 
+function isShortLinkHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "amzn.to" || host.endsWith(".amzn.to") || host === "mavely.app.link" || host.endsWith(".app.link");
+}
+
 function isAmazonGenericImage(value: string): boolean {
   return /amazonfresh|fresh-logo|amazon_logo|amazon-logo|nav-logo|logo\.png|logo\.jpg/i.test(value);
 }
@@ -61,7 +76,7 @@ function isAmazonGenericImage(value: string): boolean {
 async function resolveDestinationUrl(url: string): Promise<string> {
   try {
     const parsed = new URL(url);
-    if (!/(^|\.)amzn\.to$/i.test(parsed.hostname)) return url;
+    if (!isShortLinkHost(parsed.hostname)) return url;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
@@ -108,7 +123,8 @@ export async function POST(req: Request) {
 
     if (scraped.blocked || scraped.images.length === 0 || !usableProductTitle(scraped.title)) {
       let fallback = await browserMetadataFallback(researchUrl);
-      if ((!fallback?.title || researchUrl === url) && /(^|\.)amzn\.to$/i.test(new URL(url).hostname)) {
+      const originalHost = new URL(url).hostname;
+      if ((!fallback?.title || researchUrl === url) && isShortLinkHost(originalHost)) {
         const shortFallback = await browserMetadataFallback(url);
         const destination = shortFallback?.destinationUrl;
         if (destination && /^https?:\/\//i.test(destination) && destination !== url) {
@@ -152,9 +168,6 @@ export async function POST(req: Request) {
     const inference = inferProductInput(scraped, url);
     const research = buildResearchSummary(scraped, inference);
 
-    // Keep the internal numeric 0 for scoring/research, but send an empty price field to
-    // the UI when no real retailer price was found. That way the user sees a blank field
-    // to fill in instead of a misleading auto-entered 0.
     const uiInput = scraped.price == null
       ? { ...inference.input, price: "" }
       : inference.input;
