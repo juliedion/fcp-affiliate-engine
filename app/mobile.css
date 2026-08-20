@@ -36,6 +36,46 @@
   .readyFindHead h2 { font-size: 24px; overflow-wrap: anywhere; }
   .readyFindImage { max-height: 360px; object-fit: contain; }
   .retailerPreview { flex-direction: column; align-items: stretch; }
+
+  /* Storefront Preview is rendered with inline desktop grid styles. Override those on
+     phones so the product image, copy, badge and CTA stack instead of squeezing into a
+     narrow right-hand column. */
+  .card.saved > div[style*="background"] > div[style*="grid-template-columns"] {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 14px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .card.saved > div[style*="background"] > div[style*="grid-template-columns"] > * {
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  .card.saved > div[style*="background"] > div[style*="grid-template-columns"] img,
+  .card.saved > div[style*="background"] > div[style*="grid-template-columns"] .researchImage {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: 360px !important;
+    object-fit: contain !important;
+  }
+  .card.saved > div[style*="background"] h2,
+  .card.saved > div[style*="background"] p,
+  .card.saved > div[style*="background"] li,
+  .card.saved > div[style*="background"] .muted,
+  .card.saved > div[style*="background"] .badge {
+    overflow-wrap: anywhere;
+    word-break: normal;
+    max-width: 100%;
+  }
+  .card.saved > div[style*="background"] .primary {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    text-align: center;
+  }
+
   .v3WorkspaceNav { position: sticky; top: 0; margin-left: -14px; margin-right: -14px; border-left: 0; border-right: 0; border-radius: 0; overflow-x: auto; flex-wrap: nowrap; padding: 8px 14px; -webkit-overflow-scrolling: touch; }
   .v3WorkspaceTab { flex: 0 0 auto; white-space: nowrap; min-height: 40px; }
   .wpfGrid { grid-template-columns: minmax(0,1fr); }
@@ -55,4 +95,5 @@
   .metrics, .researchStats { grid-template-columns: 1fr !important; }
   .score { flex-direction: column; }
   .readyFindHead h2 { font-size: 22px; }
+  .card.saved > div[style*="background"] { padding: 12px !important; }
 }
