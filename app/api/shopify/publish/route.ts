@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildAffiliateMetafieldsPayload } from "@/lib/shopifyMetafields";
 
-// Custom apps created via the Shopify Dev Dashboard don't expose a static Admin API
-// token in the UI — instead we exchange the app's Client ID/Secret for a short-lived
-// access token via the client_credentials grant, scoped to the single installed store.
 async function getAccessToken(domain: string): Promise<string> {
   const clientId = process.env.SHOPIFY_API_KEY;
   const clientSecret = process.env.SHOPIFY_API_SECRET;
@@ -22,39 +19,25 @@ export async function POST(req: Request) {
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
   const version = process.env.SHOPIFY_API_VERSION || "2025-10";
   if (!domain) return NextResponse.json({ error: "Shopify credentials are not configured." }, { status: 503 });
+
   let token: string;
   try {
     token = await getAccessToken(domain);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Could not authenticate with Shopify." }, { status: 502 });
   }
+
   const product = await req.json();
 
-  // Server-side affiliate validation — never publish an incomplete affiliate product,
-  // regardless of what client-side validation already did (client validation can be bypassed).
   if (product.isAffiliateProduct && !/^https:\/\//i.test(String(product.affiliateUrl || product.amazonUrl || ""))) {
     return NextResponse.json({ error: "Affiliate products require a valid https:// Affiliate URL." }, { status: 400 });
   }
 
-  // No CTA button is baked into descriptionHtml here — that was a workaround for themes
-  // whose product template couldn't distinguish affiliate products (Shopify's own Buy button
-  // would show "Sold Out" with no working purchase path). Now that the storefront theme
-  // checks custom.is_affiliate_product / custom.affiliate_url / custom.cta_text directly
-  // (see theme/snippets/affiliate-buy-buttons.liquid), the theme is the single source of
-  // truth for the CTA — duplicating it here produced two visible buttons on the live page.
-  // If a theme without that check is ever used, this would need to come back for that case.
   const descriptionHtml = product.descriptionHtml || "";
-  // For Amazon Affiliate products, store the source Amazon URL as a metafield — this is
-  // what lets the scheduled price-resync job (see /api/cron/resync-prices) find these
-  // products later and know which URL to re-check, since this app has no database of its
-  // own; Shopify's metafields are the only durable, server-visible place to keep it.
   const metafields = product.isAffiliateProduct && product.url
     ? [{ namespace: "fort_crazypants", key: "source_url", type: "url", value: String(product.url) }]
     : undefined;
 
-  // Manual variant options (e.g. Color, Pack Size) — Amazon's real variant data isn't
-  // reliably present in static HTML (same limitation as price), so these come from the
-  // user typing them in rather than being scraped.
   const variantOptions: { name: string; values: string[] }[] = Array.isArray(product.variantOptions)
     ? product.variantOptions.filter((o: unknown): o is { name: string; values: string[] } =>
         !!o && typeof o === "object" && typeof (o as { name?: unknown }).name === "string" && Array.isArray((o as { values?: unknown }).values) && (o as { values: unknown[] }).values.length > 0)
@@ -62,21 +45,59 @@ export async function POST(req: Request) {
   const variantCombos: { values: string[]; price: number }[] = Array.isArray(product.variants) ? product.variants : [];
 
   const mutation = `mutation productCreate($product: ProductCreateInput!) { productCreate(product: $product) { product { id title handle status } userErrors { field message } } }`;
-  const variables = {
-    product: {
-      title: product.title, handle: product.handle, descriptionHtml, status: "DRAFT", productType: product.category, tags: product.tags,
-      ...(metafields ? { metafields } : {}),
-      ...(variantOptions.length > 0 ? { productOptions: variantOptions.map(o => ({ name: o.name, values: o.values.map(v => ({ name: v })) })) } : {})
-    }
+  const baseHandle = String(product.handle || "product").replace(/-+$/g, "");
+
+  async function tryCreate(handle: string) {
+    const variables = {
+      product: {
+        title: product.title,
+        handle,
+        descriptionHtml,
+        status: "DRAFT",
+        productType: product.category,
+        tags: product.tags,
+        ...(metafields ? { metafields } : {}),
+        ...(variantOptions.length > 0 ? { productOptions: variantOptions.map(o => ({ name: o.name, values: o.values.map(v => ({ name: v })) })) } : {})
+      }
+    };
+    const response = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
+      body: JSON.stringify({ query: mutation, variables })
+    });
+    const data = await response.json();
+    return { response, data };
+  }
+
+  let createResult = await tryCreate(baseHandle);
+  let handleUsed = baseHandle;
+
+  // Shopify requires every product handle to be unique. Re-publishing a product with the
+  // same generated slug used to fail completely. If that happens, automatically try a
+  // clean numbered suffix instead of making the user rename it manually.
+  const duplicateHandleError = (data: any) => {
+    const errors = data?.data?.productCreate?.userErrors || [];
+    return errors.some((e: any) =>
+      Array.isArray(e?.field) && e.field.includes("handle") && /already in use/i.test(String(e?.message || ""))
+    );
   };
-  const response = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, { method: "POST", headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token }, body: JSON.stringify({ query: mutation, variables }) });
-  const data = await response.json();
-  if (!response.ok || data.errors || data.data?.productCreate?.userErrors?.length) return NextResponse.json({ error: data.errors || data.data?.productCreate?.userErrors || "Shopify publish failed" }, { status: 400 });
+
+  if (duplicateHandleError(createResult.data)) {
+    for (let suffix = 2; suffix <= 20; suffix++) {
+      const candidate = `${baseHandle}-${suffix}`;
+      createResult = await tryCreate(candidate);
+      handleUsed = candidate;
+      if (!duplicateHandleError(createResult.data)) break;
+    }
+  }
+
+  const response = createResult.response;
+  const data = createResult.data;
+  if (!response.ok || data.errors || data.data?.productCreate?.userErrors?.length) {
+    return NextResponse.json({ error: data.errors || data.data?.productCreate?.userErrors || "Shopify publish failed" }, { status: 400 });
+  }
   const created = data.data.productCreate.product;
 
-  // Attach images via a separate productCreateMedia call — Shopify's media API needs a
-  // publicly-hosted image URL, not a raw data: URI (AI-generated images that never got
-  // hosted anywhere can't be attached this way; only real scraped/hosted photos can).
   const imageUrls: string[] = Array.isArray(product.images) ? product.images.filter((u: unknown): u is string => typeof u === "string" && /^https?:\/\//i.test(u)) : [];
   let mediaErrors: unknown = null;
   if (imageUrls.length > 0) {
@@ -89,15 +110,6 @@ export async function POST(req: Request) {
     }
   }
 
-  // productCreate leaves the default variant at $0.00 — it doesn't accept a price directly,
-  // so it has to be set in a follow-up call. Bundled here with the Amazon Affiliate
-  // inventory lock (same variant, one round-trip): Amazon Affiliate products have no real
-  // inventory to sell through Shopify's own checkout — the whole point is customers click
-  // through to Amazon instead. Shopify still shows a native Buy button on every product by
-  // default, so this disables it: enabling inventory tracking on a brand-new variant
-  // defaults its stock to 0, and inventoryPolicy DENY means "don't allow purchases when out
-  // of stock" — together that turns the native button into "Sold out", leaving the CTA link
-  // as the only working purchase path on the page.
   let inventoryLocked = false;
   let inventoryError: unknown = null;
   let priceSet = false;
@@ -109,11 +121,6 @@ export async function POST(req: Request) {
   const variantId = variantData?.data?.product?.variants?.nodes?.[0]?.id;
 
   if (variantId) {
-    // The default variant productCreate makes corresponds to the FIRST value of every
-    // option — which is exactly variantCombos[0] as long as it was built in the same order
-    // as variantOptions (the client does this). So variantCombos[0] gets applied to that
-    // existing variant via bulkUpdate; every other combo needs a real new variant via
-    // bulkCreate (productOptions alone does not generate the full combinatorial variant set).
     const defaultPrice = variantCombos[0]?.price ?? product.price;
     const variantInput: Record<string, unknown> = { id: variantId };
     if (typeof defaultPrice === "number" && defaultPrice > 0) variantInput.price = defaultPrice.toFixed(2);
@@ -153,13 +160,6 @@ export async function POST(req: Request) {
     inventoryError = "Could not find the default variant to update.";
   }
 
-  // Products were never actually appearing on the homepage or any collection page — this
-  // app generates collection *names* (e.g. "Outdoor & Garden") but never told Shopify to
-  // add the product to a real Collection object, and this store's collections are all
-  // Manual (not rule-based Smart collections), so tags alone don't populate them. This
-  // fixes that: match our generated collection names/category against the store's real
-  // collection titles by shared keywords, and always include "Home page" (the collection
-  // that drives this store's homepage) so every published product is visible somewhere.
   const collectionsAdded: string[] = [];
   const collectionErrors: unknown[] = [];
   try {
@@ -193,12 +193,6 @@ export async function POST(req: Request) {
     collectionErrors.push(e instanceof Error ? e.message : "Collection matching failed.");
   }
 
-  // Affiliate metafields (custom.is_affiliate_product / affiliate_url / affiliate_network /
-  // merchant / cta_text / fcp_verdict) — set via a dedicated metafieldsSet call, additive to
-  // the fort_crazypants.source_url metafield set inline at creation above. Requires the
-  // `custom.*` metafield definitions to already exist in the store (see
-  // scripts/setup-affiliate-metafields.mjs) — metafieldsSet will still succeed without
-  // definitions (Shopify allows undefined metafields), so this is not a hard dependency.
   let affiliateMetafieldsSet = false;
   let affiliateMetafieldsError: unknown = null;
   const affiliateMetafields = buildAffiliateMetafieldsPayload(created.id, product);
@@ -213,5 +207,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ...created, imagesAttached: imageUrls.length, mediaErrors, inventoryLocked, inventoryError, priceSet, variantsCreated, collectionsAdded, collectionErrors, affiliateMetafieldsSet, affiliateMetafieldsError });
+  return NextResponse.json({ ...created, handleUsed, imagesAttached: imageUrls.length, mediaErrors, inventoryLocked, inventoryError, priceSet, variantsCreated, collectionsAdded, collectionErrors, affiliateMetafieldsSet, affiliateMetafieldsError });
 }
